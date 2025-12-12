@@ -162,7 +162,7 @@ const Dashboard: React.FC = () => {
            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
            <h2 className="text-4xl font-black text-white mb-2 relative z-10 drop-shadow-md">CRASH</h2>
            <p className="text-indigo-200 mb-6 relative z-10">Win up to 100x your bet!</p>
-           <Link to="/game" className="inline-flex items-center gap-2 bg-accent hover:bg-accent-hover text-dark-900 font-bold py-3 px-8 rounded-full shadow-lg transition-colors relative z-10">
+           <Link to="/game" className="inline-flex items-center gap-2 bg-game-success hover:brightness-110 text-dark-900 font-bold py-3 px-8 rounded-full shadow-lg transition-colors relative z-10">
              <PlayCircle size={20} /> Play Now
            </Link>
         </div>
