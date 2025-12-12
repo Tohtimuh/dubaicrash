@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CrashGame & Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              game: {
+                bg: '#0f212e',
+                card: '#1f2933',
+                input: '#2c3a47',
+                border: '#2d4557',
+                accent: '#00d8ff',
+                success: '#00e700',
+                danger: '#ff5252',
+                text: '#8a9bad',
+              },
+              dark: {
+                900: '#0f1419',
+                800: '#1e2328',
+                700: '#2d3748',
+                600: '#374151',
+              },
+              primary: {
+                DEFAULT: '#3b82f6',
+                hover: '#2563eb',
+              },
+            },
+            fontFamily: {
+              sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
+            },
+          },
+        },
+      }
+    </script>
+    <style>
+      body {
+        background-color: #0f212e;
+        color: white;
+      }
+      /* Custom scrollbar for game history */
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+      .text-shadow-custom {
+        text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+      }
+      .glow-green {
+        box-shadow: 0 0 20px -2px #00ff00;
+      }
+      .glow-green:hover {
+        box-shadow: 0 0 25px 2px #00ff00;
+      }
+      .glow-yellow {
+        box-shadow: 0 0 20px -5px #fbc02d;
+      }
+      .glow-red {
+        box-shadow: 0 0 20px -5px #ff5252;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react-router-dom": "https://esm.sh/react-router-dom@^7.10.1",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.1/",
+    "react/": "https://esm.sh/react@^19.2.1/",
+    "react": "https://esm.sh/react@^19.2.1",
+    "lucide-react": "https://esm.sh/lucide-react@^0.560.0"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
