@@ -230,19 +230,38 @@ export const ApiService = {
   },
 
   updateTransactionStatus: async (txId: string, status: 'success' | 'failed') => {
+    // 1. Try to use the Secure RPC Function first (Atomic "One Time" guarantee)
+    try {
+        const { error } = await supabase.rpc('process_transaction', { 
+            tx_id: txId, 
+            new_status: status 
+        });
+        
+        if (!error) return; // Success!
+        
+        // If error is something other than "function not found", throw it
+        if (!error.message.includes('function') && !error.message.includes('does not exist')) {
+             throw error;
+        }
+    } catch (e) {
+        console.warn("RPC process_transaction failed, falling back to client-side logic.", e);
+    }
+
+    // 2. Fallback: Client-side logic (Used if user hasn't run the SQL script yet)
     const { data: tx } = await supabase.from('transactions').select('*').eq('id', txId).single();
     if (!tx) return;
 
-    if (status === 'success' && tx.status === 'pending') {
-      if (tx.type === 'deposit') {
-         await ApiService.updateBalance(tx.user_id, parseFloat(tx.amount));
-      }
+    // Safety check: Only process if currently pending
+    if (tx.status === 'pending') {
+        if (status === 'success' && tx.type === 'deposit') {
+             await ApiService.updateBalance(tx.user_id, parseFloat(tx.amount));
+        }
+        if (status === 'failed' && tx.type === 'withdrawal') {
+             // Refund
+             await ApiService.updateBalance(tx.user_id, parseFloat(tx.amount));
+        }
+        await supabase.from('transactions').update({ status }).eq('id', txId);
     }
-    if (status === 'failed' && tx.type === 'withdrawal' && tx.status === 'pending') {
-         await ApiService.updateBalance(tx.user_id, parseFloat(tx.amount));
-    }
-
-    await supabase.from('transactions').update({ status }).eq('id', txId);
   },
 
   // --- SETTINGS ---

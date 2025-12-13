@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ApiService } from '../services/storage';
 import { Transaction, User, AppSettings } from '../types';
-import { LogOut, Save, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
+import { LogOut, Save, RefreshCw, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 
 const AdminPanel: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -10,6 +10,7 @@ const AdminPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'deposits' | 'withdrawals' | 'users' | 'settings'>('deposits');
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const [processingId, setProcessingId] = useState<string | null>(null);
 
   useEffect(() => {
     refreshData();
@@ -35,10 +36,26 @@ const AdminPanel: React.FC = () => {
   };
 
   const handleStatusUpdate = async (id: string, status: 'success' | 'failed') => {
-    await ApiService.updateTransactionStatus(id, status);
-    refreshData();
-    setMsg(`Transaction ${status}`);
-    setTimeout(() => setMsg(''), 3000);
+    if (processingId) return; // Prevent double actions
+    setProcessingId(id);
+    try {
+        // Optimistic UI update: Remove from list immediately
+        setTransactions(prev => prev.filter(t => t.id !== id));
+        
+        await ApiService.updateTransactionStatus(id, status);
+        
+        setMsg(`Transaction ${status}`);
+        setTimeout(() => setMsg(''), 3000);
+        
+        // Refresh purely to ensure sync, but logic is handled
+        refreshData(); 
+    } catch (e) {
+        console.error(e);
+        setMsg('Action failed');
+        refreshData(); // Revert UI on failure
+    } finally {
+        setProcessingId(null);
+    }
   };
 
   const saveSettings = async () => {
@@ -98,8 +115,20 @@ const AdminPanel: React.FC = () => {
                         <div className="text-gray-500 text-xs">{new Date(tx.date).toLocaleString()}</div>
                       </div>
                       <div className="flex gap-2">
-                        <button onClick={() => handleStatusUpdate(tx.id, 'success')} className="bg-success hover:bg-green-600 text-white px-4 py-2 rounded font-bold flex items-center gap-1"><CheckCircle size={16}/> Approve</button>
-                        <button onClick={() => handleStatusUpdate(tx.id, 'failed')} className="bg-danger hover:bg-red-600 text-white px-4 py-2 rounded font-bold flex items-center gap-1"><XCircle size={16}/> Reject</button>
+                        <button 
+                            onClick={() => handleStatusUpdate(tx.id, 'success')} 
+                            disabled={!!processingId}
+                            className={`bg-success hover:bg-green-600 text-white px-4 py-2 rounded font-bold flex items-center gap-1 ${processingId === tx.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            {processingId === tx.id ? <Loader2 className="animate-spin" size={16}/> : <CheckCircle size={16}/>} Approve
+                        </button>
+                        <button 
+                            onClick={() => handleStatusUpdate(tx.id, 'failed')} 
+                            disabled={!!processingId}
+                            className={`bg-danger hover:bg-red-600 text-white px-4 py-2 rounded font-bold flex items-center gap-1 ${processingId === tx.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            {processingId === tx.id ? <Loader2 className="animate-spin" size={16}/> : <XCircle size={16}/>} Reject
+                        </button>
                       </div>
                    </div>
                  ))
@@ -123,8 +152,20 @@ const AdminPanel: React.FC = () => {
                         <div className="text-gray-500 text-xs">{new Date(tx.date).toLocaleString()}</div>
                       </div>
                       <div className="flex gap-2">
-                        <button onClick={() => handleStatusUpdate(tx.id, 'success')} className="bg-success hover:bg-green-600 text-white px-4 py-2 rounded font-bold flex items-center gap-1"><CheckCircle size={16}/> Paid</button>
-                        <button onClick={() => handleStatusUpdate(tx.id, 'failed')} className="bg-danger hover:bg-red-600 text-white px-4 py-2 rounded font-bold flex items-center gap-1"><XCircle size={16}/> Reject</button>
+                        <button 
+                            onClick={() => handleStatusUpdate(tx.id, 'success')} 
+                            disabled={!!processingId}
+                            className={`bg-success hover:bg-green-600 text-white px-4 py-2 rounded font-bold flex items-center gap-1 ${processingId === tx.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            {processingId === tx.id ? <Loader2 className="animate-spin" size={16}/> : <CheckCircle size={16}/>} Paid
+                        </button>
+                        <button 
+                            onClick={() => handleStatusUpdate(tx.id, 'failed')} 
+                            disabled={!!processingId}
+                            className={`bg-danger hover:bg-red-600 text-white px-4 py-2 rounded font-bold flex items-center gap-1 ${processingId === tx.id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            {processingId === tx.id ? <Loader2 className="animate-spin" size={16}/> : <XCircle size={16}/>} Reject
+                        </button>
                       </div>
                    </div>
                  ))
