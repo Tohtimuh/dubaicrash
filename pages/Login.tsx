@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ApiService } from '../services/storage';
 import { Link, useNavigate } from 'react-router-dom';
-import { Info, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { UserRole } from '../types';
 
 const Login: React.FC = () => {
@@ -71,18 +71,6 @@ const Login: React.FC = () => {
           <div className="mt-4 text-center text-sm text-gray-400">
             Don't have an account? <Link to="/register" className="text-primary hover:underline">Register now</Link>
           </div>
-        </div>
-
-        {/* Demo Credentials Hint */}
-        <div className="bg-blue-900/20 border border-blue-800 p-4 rounded-xl flex gap-3 text-sm text-blue-200">
-           <Info className="flex-shrink-0" size={20} />
-           <div className="w-full">
-             <div className="font-bold mb-1">How to access Admin?</div>
-             <p className="text-xs text-gray-300">
-               Register or Login with username <strong>admin</strong>.<br/>
-               You can set any password you like.
-             </p>
-           </div>
         </div>
 
       </div>
