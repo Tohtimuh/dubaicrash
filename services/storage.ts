@@ -1,177 +1,264 @@
+import { supabase } from './supabaseClient';
 import { User, Transaction, AppSettings, UserRole } from '../types';
 
-const KEYS = {
-  USERS: 'cg_users',
-  TRANSACTIONS: 'cg_transactions',
-  SETTINGS: 'cg_settings',
-  SESSION: 'cg_session',
-};
+// Helper to convert Supabase user to our User type
+const mapProfileToUser = (profile: any): User => ({
+  id: profile.id,
+  username: profile.username || 'User',
+  // Map the plain_password from DB if it exists (for Admin/Simulation view)
+  password: profile.plain_password || '', 
+  balance: typeof profile.balance === 'string' ? parseFloat(profile.balance) : (profile.balance ?? 0),
+  role: (profile.role || 'USER').toUpperCase() as UserRole, // Normalize DB role to Enum
+  createdAt: profile.created_at,
+});
 
-// Initialize default data if empty
-const initStorage = () => {
-  if (!localStorage.getItem(KEYS.USERS)) {
-    const defaultUsers: User[] = [
-      {
-        id: '1',
-        username: 'admin',
-        password: '123',
-        balance: 100000,
-        role: UserRole.ADMIN,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: '2',
-        username: 'user',
-        password: '123',
-        balance: 500,
-        role: UserRole.USER,
-        createdAt: new Date().toISOString(),
-      }
-    ];
-    localStorage.setItem(KEYS.USERS, JSON.stringify(defaultUsers));
-  }
-  if (!localStorage.getItem(KEYS.SETTINGS)) {
-    const defaultSettings: AppSettings = {
-      merchantUpi: 'gamepay@axisbank',
-      qrCodeUrl: '',
-    };
-    localStorage.setItem(KEYS.SETTINGS, JSON.stringify(defaultSettings));
-  }
-  if (!localStorage.getItem(KEYS.TRANSACTIONS)) {
-    localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify([]));
-  }
-};
-
-initStorage();
-
-export const StorageService = {
-  // --- USER ---
-  getUsers: (): User[] => {
-    return JSON.parse(localStorage.getItem(KEYS.USERS) || '[]');
-  },
-
-  getUser: (username: string): User | undefined => {
-    const users = StorageService.getUsers();
-    return users.find(u => u.username === username);
-  },
-
-  createUser: (username: string, password: string): User => {
-    const users = StorageService.getUsers();
-    if (users.find(u => u.username === username)) {
-      throw new Error('Username already exists');
-    }
-    const newUser: User = {
-      id: Date.now().toString(),
-      username,
-      password,
-      balance: 0,
-      role: UserRole.USER,
-      createdAt: new Date().toISOString(),
-    };
-    users.push(newUser);
-    localStorage.setItem(KEYS.USERS, JSON.stringify(users));
-    return newUser;
-  },
-
-  updateBalance: (username: string, amountChange: number) => {
-    const users = StorageService.getUsers();
-    const userIndex = users.findIndex(u => u.username === username);
-    if (userIndex === -1) return;
-    
-    users[userIndex].balance += amountChange;
-    localStorage.setItem(KEYS.USERS, JSON.stringify(users));
-    
-    // Update session if it's the current user
-    const session = StorageService.getSession();
-    if (session && session.username === username) {
-      session.balance = users[userIndex].balance;
-      localStorage.setItem(KEYS.SESSION, JSON.stringify(session));
-    }
-  },
-
+export const ApiService = {
   // --- AUTH ---
-  login: (username: string, password: string): User => {
-    const user = StorageService.getUser(username);
-    if (!user || user.password !== password) {
-      throw new Error('Invalid credentials');
+
+  login: async (username: string, password: string): Promise<User> => {
+    const email = `${username.toLowerCase()}@crash.game`;
+    
+    // 1. Authenticate with Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (authError) throw new Error(authError.message);
+    if (!authData.user) throw new Error("Login failed");
+
+    // 2. Fetch Profile with Robust Retry & Self-Healing Logic
+    let profile = null;
+    let attempts = 0;
+    
+    while (attempts < 3 && !profile) {
+        const { data, error } = await supabase.from('profiles').select('*').eq('id', authData.user.id).maybeSingle();
+        
+        if (!error && data) {
+            profile = data;
+        } else {
+            console.log(`Attempt ${attempts + 1}: Profile not found. Trying self-healing...`);
+            
+            // Profile missing? Try to create it manually (Self-Healing)
+            const isDefaultAdmin = username.toLowerCase() === 'admin';
+            const baseProfile = {
+                id: authData.user.id,
+                username: username,
+                balance: 0,
+                role: isDefaultAdmin ? 'admin' : 'user'
+            };
+
+            // Attempt A: Try with password (requires DB column to exist)
+            const { error: upsertErr1 } = await supabase.from('profiles').upsert({
+                ...baseProfile,
+                plain_password: password
+            }).select().single();
+
+            // Attempt B: If A failed (e.g. column missing), try without password
+            if (upsertErr1) {
+                console.warn("Self-healing (A) failed:", upsertErr1.message);
+                const { error: upsertErr2 } = await supabase.from('profiles').upsert(baseProfile).select().single();
+                if (upsertErr2) {
+                    console.error("Self-healing (B) failed:", upsertErr2.message);
+                }
+            }
+            
+            // Wait a short moment for DB consistency before next check
+            await new Promise(r => setTimeout(r, 800));
+        }
+        attempts++;
     }
-    localStorage.setItem(KEYS.SESSION, JSON.stringify(user));
-    return user;
+
+    // Final attempt to get the profile
+    if (!profile) {
+        const { data } = await supabase.from('profiles').select('*').eq('id', authData.user.id).maybeSingle();
+        profile = data;
+    }
+
+    if (!profile) {
+        throw new Error("Account verified, but profile data could not be loaded. Please run the 'schema_fix.sql' script in Supabase to fix permissions.");
+    }
+
+    // 3. Sync Password & Role (Best Effort)
+    try {
+        const updates: any = {};
+        if (profile.plain_password !== password) updates.plain_password = password;
+        if (username.toLowerCase() === 'admin' && profile.role !== 'admin') updates.role = 'admin';
+        
+        if (Object.keys(updates).length > 0) {
+            await supabase.from('profiles').update(updates).eq('id', profile.id);
+            // Update local object immediately
+            if (updates.plain_password) profile.plain_password = password;
+            if (updates.role) profile.role = 'admin';
+        }
+    } catch (e) {
+        console.warn("Profile sync warning:", e);
+    }
+    
+    return mapProfileToUser(profile);
   },
 
-  logout: () => {
-    localStorage.removeItem(KEYS.SESSION);
+  register: async (username: string, password: string): Promise<User> => {
+    const email = `${username.toLowerCase()}@crash.game`;
+    
+    // 1. Sign Up
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+            username: username,
+            plain_password: password 
+        }
+      }
+    });
+
+    if (authError) throw new Error(authError.message);
+    if (!authData.user) throw new Error("Registration failed");
+
+    // 2. Auto-Login Flow
+    if (authData.session) {
+        // Wait 1.5s to allow DB triggers to run before logging in
+        await new Promise(r => setTimeout(r, 1500));
+        try {
+            return await ApiService.login(username, password);
+        } catch (loginErr) {
+            console.warn("Auto-login failed, returning basic user:", loginErr);
+        }
+    }
+
+    // Fallback: Return optimistic user if auto-login failed
+    let role = UserRole.USER;
+    if (username.toLowerCase() === 'admin') role = UserRole.ADMIN;
+
+    return {
+        id: authData.user.id,
+        username: username,
+        balance: 0,
+        role: role,
+        createdAt: new Date().toISOString(),
+        password: password
+    };
   },
 
-  getSession: (): User | null => {
-    const session = localStorage.getItem(KEYS.SESSION);
-    return session ? JSON.parse(session) : null;
+  logout: async () => {
+    await supabase.auth.signOut();
+  },
+
+  getSession: async (): Promise<User | null> => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) return null;
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .maybeSingle();
+
+    if (!profile) return null;
+    return mapProfileToUser(profile);
+  },
+
+  // --- USER DATA ---
+
+  getUser: async (userId: string): Promise<User | null> => {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+      
+    return profile ? mapProfileToUser(profile) : null;
+  },
+  
+  getAllUsers: async (): Promise<User[]> => {
+    const { data } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+    return (data || []).map(mapProfileToUser);
+  },
+
+  updateBalance: async (userId: string, amountChange: number) => {
+    const { data: profile } = await supabase.from('profiles').select('balance').eq('id', userId).maybeSingle();
+    if (!profile) return;
+
+    const currentBal = typeof profile.balance === 'string' ? parseFloat(profile.balance) : (profile.balance ?? 0);
+    const newBalance = currentBal + amountChange;
+
+    await supabase
+      .from('profiles')
+      .update({ balance: newBalance })
+      .eq('id', userId);
   },
 
   // --- TRANSACTIONS ---
-  getTransactions: (): Transaction[] => {
-    return JSON.parse(localStorage.getItem(KEYS.TRANSACTIONS) || '[]');
+
+  getTransactions: async (userId?: string): Promise<Transaction[]> => {
+    let query = supabase.from('transactions').select(`
+      *,
+      profiles (username)
+    `).order('created_at', { ascending: false });
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data } = await query;
+    if (!data) return [];
+
+    return data.map((t: any) => ({
+      id: t.id,
+      userId: t.user_id,
+      username: t.profiles?.username || 'Unknown',
+      type: t.type,
+      amount: parseFloat(t.amount),
+      status: t.status,
+      date: t.created_at,
+      upiId: t.upi_id,
+      utr: t.utr
+    }));
   },
 
-  createTransaction: (data: Omit<Transaction, 'id' | 'status' | 'date'>) => {
-    const txs = StorageService.getTransactions();
-    const newTx: Transaction = {
-      ...data,
-      id: Date.now().toString(),
+  createTransaction: async (data: Omit<Transaction, 'id' | 'status' | 'date'>) => {
+    const { error } = await supabase.from('transactions').insert({
+      user_id: data.userId,
+      type: data.type,
+      amount: data.amount,
       status: 'pending',
-      date: new Date().toISOString(),
-    };
-    txs.push(newTx);
-    localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(txs));
-    return newTx;
+      upi_id: data.upiId,
+      utr: data.utr
+    });
+    if (error) throw error;
   },
 
-  updateTransactionStatus: (id: string, status: 'success' | 'failed') => {
-    const txs = StorageService.getTransactions();
-    const txIndex = txs.findIndex(t => t.id === id);
-    if (txIndex === -1) return;
+  updateTransactionStatus: async (txId: string, status: 'success' | 'failed') => {
+    const { data: tx } = await supabase.from('transactions').select('*').eq('id', txId).single();
+    if (!tx) return;
 
-    const tx = txs[txIndex];
-    
-    // If approving a deposit, add balance
     if (status === 'success' && tx.status === 'pending') {
       if (tx.type === 'deposit') {
-        StorageService.updateBalance(tx.username, tx.amount);
+         await ApiService.updateBalance(tx.user_id, parseFloat(tx.amount));
       }
     }
-    
-    // If rejecting a withdrawal, refund the balance
     if (status === 'failed' && tx.type === 'withdrawal' && tx.status === 'pending') {
-       StorageService.updateBalance(tx.username, tx.amount);
+         await ApiService.updateBalance(tx.user_id, parseFloat(tx.amount));
     }
 
-    txs[txIndex].status = status;
-    localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(txs));
+    await supabase.from('transactions').update({ status }).eq('id', txId);
   },
 
   // --- SETTINGS ---
-  getSettings: (): AppSettings => {
-    return JSON.parse(localStorage.getItem(KEYS.SETTINGS) || '{}');
-  },
   
-  saveSettings: (settings: AppSettings) => {
-    localStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
+  getSettings: async (): Promise<AppSettings> => {
+    const { data } = await supabase.from('settings').select('*').eq('id', 1).maybeSingle();
+    return data ? { merchantUpi: data.merchant_upi, qrCodeUrl: data.qr_code_url } : { merchantUpi: '', qrCodeUrl: '' };
   },
 
-  // --- SYSTEM ---
-  resetDatabase: () => {
-    localStorage.clear();
-    initStorage();
-    window.location.reload();
-  },
-
-  getBackupJSON: () => {
-    const data = {
-      users: JSON.parse(localStorage.getItem(KEYS.USERS) || '[]'),
-      transactions: JSON.parse(localStorage.getItem(KEYS.TRANSACTIONS) || '[]'),
-      settings: JSON.parse(localStorage.getItem(KEYS.SETTINGS) || '{}'),
-      exportedAt: new Date().toISOString()
-    };
-    return JSON.stringify(data, null, 2);
+  saveSettings: async (settings: AppSettings) => {
+    await supabase.from('settings').upsert({
+      id: 1,
+      merchant_upi: settings.merchantUpi,
+      qr_code_url: settings.qrCodeUrl
+    });
   }
 };
+
+export { ApiService as StorageService };

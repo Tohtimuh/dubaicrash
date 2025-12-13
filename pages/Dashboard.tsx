@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { StorageService } from '../services/storage';
-import { User, Transaction } from '../types';
+import { ApiService } from '../services/storage';
+import { User, Transaction, AppSettings } from '../types';
 import { Wallet, LogOut, History, PlayCircle, QrCode, Copy, CheckCheck, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -16,7 +16,7 @@ const Dashboard: React.FC = () => {
   const [depositUpi, setDepositUpi] = useState('');
   const [depositUtr, setDepositUtr] = useState('');
   const [depositStep, setDepositStep] = useState(1);
-  const [settings, setSettings] = useState(StorageService.getSettings());
+  const [settings, setSettings] = useState<AppSettings>({ merchantUpi: '', qrCodeUrl: '' });
 
   // Withdraw State
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -26,20 +26,25 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     refreshData();
-    const interval = setInterval(refreshData, 5000); // Poll for balance updates
+    const interval = setInterval(refreshData, 10000); // Poll slower for async
     return () => clearInterval(interval);
   }, []);
 
-  const refreshData = () => {
-    const session = StorageService.getSession();
-    if (session) {
-      const freshUser = StorageService.getUser(session.username);
-      setUser(freshUser || null);
-      
-      const allTxs = StorageService.getTransactions();
-      const myTxs = allTxs.filter(t => t.userId === freshUser?.id).sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      setTransactions(myTxs);
-      setSettings(StorageService.getSettings());
+  const refreshData = async () => {
+    try {
+        const session = await ApiService.getSession();
+        if (session) {
+            const freshUser = await ApiService.getUser(session.id);
+            setUser(freshUser || null);
+            
+            const myTxs = await ApiService.getTransactions(session.id);
+            setTransactions(myTxs);
+            
+            const fetchedSettings = await ApiService.getSettings();
+            setSettings(fetchedSettings);
+        }
+    } catch (e) {
+        console.error("Data fetch error", e);
     }
   };
 
@@ -48,15 +53,15 @@ const Dashboard: React.FC = () => {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const handleLogout = () => {
-    StorageService.logout();
+  const handleLogout = async () => {
+    await ApiService.logout();
     window.location.hash = '#/login';
   };
 
-  const handleDeposit = () => {
+  const handleDeposit = async () => {
     if (!user) return;
     try {
-      StorageService.createTransaction({
+      await ApiService.createTransaction({
         userId: user.id,
         username: user.username,
         type: 'deposit',
@@ -74,7 +79,7 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const handleWithdraw = () => {
+  const handleWithdraw = async () => {
     if (!user) return;
     const amount = parseFloat(withdrawAmount);
     if (isNaN(amount) || amount <= 0) {
@@ -87,10 +92,10 @@ const Dashboard: React.FC = () => {
     }
 
     try {
-      // Deduct balance immediately for withdrawal request
-      StorageService.updateBalance(user.username, -amount);
+      // Deduct balance immediately for withdrawal request (optimistic, but DB handles truth)
+      await ApiService.updateBalance(user.id, -amount);
       
-      StorageService.createTransaction({
+      await ApiService.createTransaction({
         userId: user.id,
         username: user.username,
         type: 'withdrawal',
@@ -105,10 +110,11 @@ const Dashboard: React.FC = () => {
       refreshData();
     } catch (e) {
       showToastMsg('Withdrawal failed', 'error');
+      refreshData(); // Sync back real balance
     }
   };
 
-  if (!user) return null;
+  if (!user) return <div className="min-h-screen bg-dark-900 flex items-center justify-center text-white">Loading...</div>;
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-dark-900 pb-20 relative">
@@ -330,7 +336,7 @@ const Dashboard: React.FC = () => {
                         <div>
                           <div className="font-bold text-white text-sm capitalize">{tx.type}</div>
                           <div className="text-xs text-gray-400">{new Date(tx.date).toLocaleString()}</div>
-                          <div className="text-xs text-gray-500 font-mono mt-1">Ref: {tx.utr || tx.id}</div>
+                          <div className="text-xs text-gray-500 font-mono mt-1">Ref: {tx.utr || tx.id.slice(0,8)}</div>
                         </div>
                         <div className="text-right">
                           <div className={`font-bold ${tx.type === 'deposit' ? 'text-success' : 'text-danger'}`}>

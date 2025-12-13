@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StorageService } from '../services/storage';
+import { ApiService } from '../services/storage';
 import { GameEngine, GameState } from '../services/gameEngine';
 import { Link } from 'react-router-dom';
 import { X, Wifi, WifiOff, Loader2 } from 'lucide-react';
+import { User } from '../types';
 
 // --- GAME CONSTANTS ---
 const CHART_X_MAX = 20;
@@ -32,6 +33,7 @@ interface BotPlayer {
 const Game: React.FC = () => {
     // --- STATE ---
     const [balance, setBalance] = useState(0);
+    const [userId, setUserId] = useState<string | null>(null);
     const [gameState, setGameState] = useState<GameState['status']>('IDLE');
     const [multiplier, setMultiplier] = useState(1.00);
     const [countdownTime, setCountdownTime] = useState(0);
@@ -91,6 +93,7 @@ const Game: React.FC = () => {
         const handleOnline = () => {
             console.log("Network restored");
             setIsOnline(true);
+            fetchUserData();
         };
         const handleOffline = () => {
             console.log("Network lost");
@@ -100,15 +103,23 @@ const Game: React.FC = () => {
         window.addEventListener('online', handleOnline);
         window.addEventListener('offline', handleOffline);
 
-        const session = StorageService.getSession();
-        if (session) {
-            const user = StorageService.getUser(session.username);
-            if (user) setBalance(user.balance);
-        }
+        const fetchUserData = async () => {
+            try {
+                const sessionUser = await ApiService.getSession();
+                if (sessionUser) {
+                    setUserId(sessionUser.id);
+                    // Fetch fresh balance
+                    const freshUser = await ApiService.getUser(sessionUser.id);
+                    if (freshUser) setBalance(freshUser.balance);
+                }
+            } catch (e) {
+                console.error("Failed to load user", e);
+            } finally {
+                if(isMountedRef.current) setIsConnecting(false);
+            }
+        };
 
-        setTimeout(() => {
-             if(isMountedRef.current) setIsConnecting(false);
-        }, 1000);
+        fetchUserData();
 
         if (chartRef.current && (window as any).Chart) {
             const ctx = chartRef.current.getContext('2d');
@@ -288,6 +299,13 @@ const Game: React.FC = () => {
                 if (p.status === 'active') return { ...p, status: 'lost' };
                 return p;
             }));
+            
+            // Sync balance occasionally to ensure consistency
+            if (userId) {
+                ApiService.getUser(userId).then(u => {
+                    if(u && isMountedRef.current) setBalance(u.balance);
+                });
+            }
         }
     };
 
@@ -342,13 +360,13 @@ const Game: React.FC = () => {
         // If bet is "Locked" (queued for next round OR waiting for current countdown), we adjust balance.
         const isLockedBet = !!nextRoundBet || (hasBet && !isBetActive);
         
-        if (isLockedBet) {
+        if (isLockedBet && userId) {
             const diff = newAmount - betAmount;
             if (diff > 0 && balance < diff) return; // Insufficient balance
             
-            const session = StorageService.getSession();
-            if(session) StorageService.updateBalance(session.username, -diff);
+            // Optimistic Update
             setBalance(prev => prev - diff);
+            ApiService.updateBalance(userId, -diff);
             
             if (nextRoundBet) {
                 setNextRoundBet(prev => prev ? ({ ...prev, amount: newAmount }) : null);
@@ -378,14 +396,14 @@ const Game: React.FC = () => {
             alert("Insufficient Balance");
             return;
         }
-
-        const session = StorageService.getSession();
+        if (!userId) return;
 
         // Queue Bet for Next Round if Current Round is Active
         if (gameState === 'RUNNING' && isBetActiveRef.current && cashedOutRef.current) {
              setNextRoundBet({ amount: betAmount, cashoutAt: cashoutAt });
-             if(session) StorageService.updateBalance(session.username, -betAmount);
+             // Optimistic Update
              setBalance(prev => prev - betAmount);
+             ApiService.updateBalance(userId, -betAmount);
              return;
         }
         
@@ -393,16 +411,18 @@ const Game: React.FC = () => {
         setHasBet(true);
         hasBetRef.current = true;
 
-        if(session) StorageService.updateBalance(session.username, -betAmount);
+        // Optimistic Update
         setBalance(prev => prev - betAmount);
+        ApiService.updateBalance(userId, -betAmount);
     };
 
     const cancelBet = () => {
-        const session = StorageService.getSession();
+        if (!userId) return;
 
         // Cancel Next Round Bet
         if (nextRoundBet) {
-            if(session) StorageService.updateBalance(session.username, nextRoundBet.amount);
+            // Refund
+            ApiService.updateBalance(userId, nextRoundBet.amount);
             setBalance(prev => prev + nextRoundBet.amount);
             setNextRoundBet(null);
             return;
@@ -414,20 +434,22 @@ const Game: React.FC = () => {
         setHasBet(false);
         hasBetRef.current = false;
 
-        if(session) StorageService.updateBalance(session.username, betAmount);
+        // Refund
+        ApiService.updateBalance(userId, betAmount);
         setBalance(prev => prev + betAmount);
     };
 
     const triggerCashout = (atMultiplier: number) => {
         if (!isBetActiveRef.current || cashedOutRef.current) return;
+        if (!userId) return;
         
         // Use snapshotted bet amount
         const currentBet = activeRoundConfigRef.current.bet; 
         const winnings = currentBet * atMultiplier;
         
-        const session = StorageService.getSession();
-        if(session) StorageService.updateBalance(session.username, winnings);
+        // Optimistic Update
         setBalance(prev => prev + winnings);
+        ApiService.updateBalance(userId, winnings);
         
         setWinAmount(winnings);
         setUserCashoutMultiplier(atMultiplier);

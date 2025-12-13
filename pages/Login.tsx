@@ -1,30 +1,32 @@
 import React, { useState } from 'react';
-import { StorageService } from '../services/storage';
-import { Link } from 'react-router-dom';
-import { Info, RefreshCw } from 'lucide-react';
+import { ApiService } from '../services/storage';
+import { Link, useNavigate } from 'react-router-dom';
+import { Info, Loader2 } from 'lucide-react';
+import { UserRole } from '../types';
 
 const Login: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
+    setLoading(true);
     try {
-      const user = StorageService.login(username, password);
-      if (user.role === 'ADMIN') {
-        window.location.hash = '#/admin';
+      const user = await ApiService.login(username, password);
+      if (user.role === UserRole.ADMIN) {
+        navigate('/admin');
       } else {
-        window.location.hash = '#/';
+        navigate('/');
       }
     } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
-  const handleReset = () => {
-    if(window.confirm("Are you sure? This will delete all users and reset to default.")) {
-      StorageService.resetDatabase();
+      console.error(err);
+      setError(err.message || 'Login failed. Please check credentials.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -57,8 +59,13 @@ const Login: React.FC = () => {
               />
             </div>
             {error && <div className="text-danger text-center text-sm">{error}</div>}
-            <button type="submit" className="w-full bg-primary hover:bg-primary-hover text-white font-bold py-3 rounded-lg transition-colors">
-              Login
+            <button 
+                type="submit" 
+                disabled={loading}
+                className="w-full bg-primary hover:bg-primary-hover text-white font-bold py-3 rounded-lg transition-colors flex justify-center items-center gap-2"
+            >
+              {loading && <Loader2 className="animate-spin" size={20} />}
+              {loading ? 'Signing In...' : 'Login'}
             </button>
           </form>
           <div className="mt-4 text-center text-sm text-gray-400">
@@ -70,26 +77,12 @@ const Login: React.FC = () => {
         <div className="bg-blue-900/20 border border-blue-800 p-4 rounded-xl flex gap-3 text-sm text-blue-200">
            <Info className="flex-shrink-0" size={20} />
            <div className="w-full">
-             <div className="font-bold mb-1">Default Credentials (Automatic File)</div>
-             <div className="grid grid-cols-2 gap-2 font-mono text-xs text-white">
-                <div>
-                   <div className="text-gray-400">Admin</div>
-                   <div>User: admin</div>
-                   <div>Pass: 123</div>
-                </div>
-                <div>
-                   <div className="text-gray-400">Player</div>
-                   <div>User: user</div>
-                   <div>Pass: 123</div>
-                </div>
-             </div>
+             <div className="font-bold mb-1">How to access Admin?</div>
+             <p className="text-xs text-gray-300">
+               Register or Login with username <strong>admin</strong>.<br/>
+               You can set any password you like.
+             </p>
            </div>
-        </div>
-        
-        <div className="text-center mt-6">
-           <button onClick={handleReset} className="text-xs text-gray-600 hover:text-red-400 flex items-center justify-center gap-1 mx-auto">
-             <RefreshCw size={12} /> Reset Database to Default
-           </button>
         </div>
 
       </div>

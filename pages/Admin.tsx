@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { StorageService } from '../services/storage';
+import { ApiService } from '../services/storage';
 import { Transaction, User, AppSettings } from '../types';
-import { LogOut, Save, RefreshCw, CheckCircle, XCircle, Download } from 'lucide-react';
+import { LogOut, Save, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
 
 const AdminPanel: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -9,41 +9,41 @@ const AdminPanel: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>({ merchantUpi: '', qrCodeUrl: '' });
   const [activeTab, setActiveTab] = useState<'deposits' | 'withdrawals' | 'users' | 'settings'>('deposits');
   const [msg, setMsg] = useState('');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     refreshData();
   }, []);
 
-  const refreshData = () => {
-    setUsers(StorageService.getUsers());
-    setTransactions(StorageService.getTransactions());
-    setSettings(StorageService.getSettings());
+  const refreshData = async () => {
+    setLoading(true);
+    try {
+        const [allUsers, allTxs, sets] = await Promise.all([
+            ApiService.getAllUsers(),
+            ApiService.getTransactions(),
+            ApiService.getSettings()
+        ]);
+        setUsers(allUsers);
+        setTransactions(allTxs);
+        setSettings(sets);
+    } catch (e) {
+        console.error(e);
+        setMsg('Failed to load data');
+    } finally {
+        setLoading(false);
+    }
   };
 
-  const handleStatusUpdate = (id: string, status: 'success' | 'failed') => {
-    StorageService.updateTransactionStatus(id, status);
+  const handleStatusUpdate = async (id: string, status: 'success' | 'failed') => {
+    await ApiService.updateTransactionStatus(id, status);
     refreshData();
     setMsg(`Transaction ${status}`);
     setTimeout(() => setMsg(''), 3000);
   };
 
-  const saveSettings = () => {
-    StorageService.saveSettings(settings);
+  const saveSettings = async () => {
+    await ApiService.saveSettings(settings);
     setMsg('Settings saved');
-    setTimeout(() => setMsg(''), 3000);
-  };
-
-  const handleDownloadBackup = () => {
-    const jsonString = StorageService.getBackupJSON();
-    const blob = new Blob([jsonString], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `crash_game_backup_${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setMsg('Database downloaded successfully');
     setTimeout(() => setMsg(''), 3000);
   };
 
@@ -55,9 +55,10 @@ const AdminPanel: React.FC = () => {
       <header className="bg-dark-800 border-b border-dark-700 p-4 flex justify-between items-center sticky top-0 z-10">
         <h1 className="text-xl font-bold text-accent">Admin Control Panel</h1>
         <div className="flex gap-4">
-            <button onClick={handleDownloadBackup} className="flex items-center gap-2 text-primary hover:text-primary-hover"><Download size={18} /> Backup</button>
-            <button onClick={refreshData} className="flex items-center gap-2 hover:text-white"><RefreshCw size={18} /> Refresh</button>
-            <button onClick={() => { StorageService.logout(); window.location.hash = '#/login'; }} className="flex items-center gap-2 text-danger hover:text-red-400"><LogOut size={18} /> Logout</button>
+            <button onClick={refreshData} disabled={loading} className="flex items-center gap-2 hover:text-white">
+                <RefreshCw size={18} className={loading ? 'animate-spin' : ''} /> Refresh
+            </button>
+            <button onClick={async () => { await ApiService.logout(); window.location.hash = '#/login'; }} className="flex items-center gap-2 text-danger hover:text-red-400"><LogOut size={18} /> Logout</button>
         </div>
       </header>
 
@@ -150,7 +151,7 @@ const AdminPanel: React.FC = () => {
                       {users.map(u => (
                         <tr key={u.id} className="hover:bg-dark-800">
                           <td className="p-3 text-white font-medium">{u.username}</td>
-                          <td className="p-3 text-gray-400 font-mono">{u.password}</td>
+                          <td className="p-3 text-gray-400 font-mono text-xs">{u.password || '---'}</td>
                           <td className="p-3 text-accent font-bold">₹{u.balance.toFixed(2)}</td>
                           <td className="p-3 text-gray-400 text-xs">{u.role}</td>
                           <td className="p-3 text-gray-500 text-xs">{new Date(u.createdAt).toLocaleDateString()}</td>
