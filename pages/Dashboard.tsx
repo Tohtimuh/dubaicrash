@@ -259,8 +259,19 @@ const Dashboard: React.FC = () => {
                   </div>
                   
                   <div className="bg-dark-700 p-3 rounded-lg flex justify-between items-center mb-4">
-                    <span className="text-sm font-mono text-gray-300">{settings.merchantUpi}</span>
-                    <button className="text-primary text-xs font-bold uppercase tracking-wider flex items-center gap-1">
+                    <span className="text-sm font-mono text-gray-300 truncate max-w-[180px]">{settings.merchantUpi}</span>
+                    <button 
+                        onClick={() => {
+                            if(settings.merchantUpi) {
+                                navigator.clipboard.writeText(settings.merchantUpi)
+                                    .then(() => showToastMsg('UPI Copied!', 'success'))
+                                    .catch(() => showToastMsg('Failed to copy', 'error'));
+                            } else {
+                                showToastMsg('No UPI ID set', 'error');
+                            }
+                        }}
+                        className="text-primary text-xs font-bold uppercase tracking-wider flex items-center gap-1 hover:text-white transition-colors"
+                    >
                       <Copy size={12} /> Copy
                     </button>
                   </div>
